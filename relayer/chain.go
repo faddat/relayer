@@ -388,7 +388,7 @@ type protoTxProvider interface {
 // the encoded transaction or an error if the unsigned transaction cannot be
 // built.
 func BuildSimTx(txf tx.Factory, msgs ...sdk.Msg) ([]byte, error) {
-	txb, err := tx.BuildUnsignedTx(txf, msgs...)
+	txb, err := txf.BuildUnsignedTx(msgs...)
 	if err != nil {
 		return nil, err
 	}
