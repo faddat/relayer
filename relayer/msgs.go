@@ -69,14 +69,14 @@ func (c *Chain) UpdateClient(dst *Chain) (sdk.Msg, error) {
 	return msg, nil
 }
 
-func (c *Chain) UpdateClientAtHeight(dst *Chain, dsth int64) (sdk.Msg, error) {
+func (c *Chain) UpdateClientAtHeight(dst *Chain, dsth int64) (sdk.Msg, *tmclient.Header, error) {
 	header, err := dst.GetIBCUpdateHeaderAtHeight(c, dsth)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := header.ValidateBasic(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	msg, err := clienttypes.NewMsgUpdateClient(
 		c.PathEnd.ClientID,
@@ -84,9 +84,9 @@ func (c *Chain) UpdateClientAtHeight(dst *Chain, dsth int64) (sdk.Msg, error) {
 		c.MustGetAddress().String(), // 'MustGetAddress' must be called directly before calling 'NewMsg...'
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return msg, nil
+	return msg, header, nil
 }
 
 // ConnInit creates a MsgConnectionOpenInit
