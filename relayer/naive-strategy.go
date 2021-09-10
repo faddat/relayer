@@ -9,7 +9,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	clienttypes "github.com/cosmos/ibc-go/modules/core/02-client/types"
 	chantypes "github.com/cosmos/ibc-go/modules/core/04-channel/types"
-	tmclient "github.com/cosmos/ibc-go/modules/light-clients/07-tendermint/types"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	"golang.org/x/sync/errgroup"
 )
@@ -513,34 +512,10 @@ func (nrs *NaiveStrategy) RelayPackets(src, dst *Chain, sp *RelaySequences) erro
 		MaxMsgLength: nrs.MaxMsgLength,
 	}
 
-	srch, dsth, err := QueryLatestHeights(src, dst)
-	if err != nil {
-		return err
-	}
-
-	var (
-		eg                         errgroup.Group
-		dstUpdateMsg, srcUpdateMsg sdk.Msg
-		dstHeader, srcHeader       *tmclient.Header
-	)
-
-	eg.Go(func() error {
-		dstUpdateMsg, dstHeader, err = src.UpdateClientAtHeight(dst, dsth)
-		return err
-	})
-	eg.Go(func() error {
-		srcUpdateMsg, srcHeader, err = dst.UpdateClientAtHeight(src, srch)
-		return err
-	})
-
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-
 	// add messages for sequences on src
 	for _, seq := range sp.Src {
 		// Query src for the sequence number to get type of packet
-		recvMsgs, timeoutMsgs, err := relayPacketFromSequence(src, dst, srcHeader, dstHeader, seq)
+		recvMsgs, timeoutMsgs, err := relayPacketFromSequence(src, dst, seq)
 		if err != nil {
 			return err
 		}
@@ -559,7 +534,7 @@ func (nrs *NaiveStrategy) RelayPackets(src, dst *Chain, sp *RelaySequences) erro
 	// add messages for sequences on dst
 	for _, seq := range sp.Dst {
 		// Query dst for the sequence number to get type of packet
-		recvMsgs, timeoutMsgs, err := relayPacketFromSequence(dst, src, dstHeader, srcHeader, seq)
+		recvMsgs, timeoutMsgs, err := relayPacketFromSequence(dst, src, seq)
 		if err != nil {
 			return err
 		}
@@ -583,11 +558,21 @@ func (nrs *NaiveStrategy) RelayPackets(src, dst *Chain, sp *RelaySequences) erro
 
 	// Prepend non-empty msg lists with UpdateClient
 	if len(msgs.Dst) != 0 {
-		msgs.Dst = append([]sdk.Msg{dstUpdateMsg}, msgs.Dst...)
+		updateMsg, err := dst.UpdateClient(src)
+		if err != nil {
+			return err
+		}
+
+		msgs.Dst = append([]sdk.Msg{updateMsg}, msgs.Dst...)
 	}
 
 	if len(msgs.Src) != 0 {
-		msgs.Src = append([]sdk.Msg{srcUpdateMsg}, msgs.Src...)
+		updateMsg, err := src.UpdateClient(dst)
+		if err != nil {
+			return err
+		}
+
+		msgs.Src = append([]sdk.Msg{updateMsg}, msgs.Src...)
 	}
 
 	// send messages to their respective chains
@@ -605,8 +590,12 @@ func (nrs *NaiveStrategy) RelayPackets(src, dst *Chain, sp *RelaySequences) erro
 
 // relayPacketFromSequence relays a packet with a given seq on src
 // and returns recvPacket msgs, timeoutPacketmsgs and error
-func relayPacketFromSequence(src, dst *Chain, srcHeader, dstHeader *tmclient.Header, seq uint64) ([]sdk.Msg, []sdk.Msg, error) {
-	txs, err := src.QueryTxs(srcHeader.GetHeight().GetRevisionHeight(), 1, 1000, rcvPacketQuery(src.PathEnd.ChannelID, int(seq)))
+func relayPacketFromSequence(src, dst *Chain, seq uint64) ([]sdk.Msg, []sdk.Msg, error) {
+	srch, err := src.QueryLatestHeight()
+	if err != nil {
+		return nil, nil, err
+	}
+	txs, err := src.QueryTxs(uint64(srch), 1, 1000, rcvPacketQuery(src.PathEnd.ChannelID, int(seq)))
 	switch {
 	case err != nil:
 		return nil, nil, err
@@ -616,7 +605,7 @@ func relayPacketFromSequence(src, dst *Chain, srcHeader, dstHeader *tmclient.Hea
 		return nil, nil, fmt.Errorf("more than one transaction returned with query")
 	}
 
-	rcvPackets, timeoutPackets, err := relayPacketsFromResultTx(src, dst, dstHeader, txs[0])
+	rcvPackets, timeoutPackets, err := relayPacketsFromResultTx(src, dst, txs[0])
 	switch {
 	case err != nil:
 		return nil, nil, err
@@ -695,7 +684,7 @@ func acknowledgementFromSequence(src, dst *Chain, seq uint64) ([]sdk.Msg, error)
 
 // relayPacketsFromResultTx looks through the events in a *ctypes.ResultTx
 // and returns relayPackets with the appropriate data
-func relayPacketsFromResultTx(src, dst *Chain, dstHeader *tmclient.Header, res *ctypes.ResultTx) ([]relayPacket, []relayPacket, error) {
+func relayPacketsFromResultTx(src, dst *Chain, res *ctypes.ResultTx) ([]relayPacket, []relayPacket, error) {
 	var (
 		rcvPackets     []relayPacket
 		timeoutPackets []relayPacket
@@ -755,12 +744,17 @@ func relayPacketsFromResultTx(src, dst *Chain, dstHeader *tmclient.Header, res *
 			}
 
 			// fetch the header which represents a block produced on destination
+			block, err := dst.GetIBCUpdateHeader(src)
+			if err != nil {
+				return nil, nil, err
+			}
+
 			switch {
 			// If the packet has a timeout height, and it has been reached, return a timeout packet
-			case !rp.timeout.IsZero() && dstHeader.GetHeight().GTE(rp.timeout):
+			case !rp.timeout.IsZero() && block.GetHeight().GTE(rp.timeout):
 				timeoutPackets = append(timeoutPackets, rp.timeoutPacket())
 			// If the packet has a timeout timestamp and it has been reached, return a timeout packet
-			case rp.timeoutStamp != 0 && dstHeader.GetTime().UnixNano() >= int64(rp.timeoutStamp):
+			case rp.timeoutStamp != 0 && block.GetTime().UnixNano() >= int64(rp.timeoutStamp):
 				timeoutPackets = append(timeoutPackets, rp.timeoutPacket())
 			// If the packet matches the relay constraints relay it as a MsgReceivePacket
 			case !rp.pass:
