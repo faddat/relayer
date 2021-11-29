@@ -18,16 +18,16 @@ import (
 	bankTypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
-	transfertypes "github.com/cosmos/ibc-go/modules/apps/transfer/types"
-	clientutils "github.com/cosmos/ibc-go/modules/core/02-client/client/utils"
-	clienttypes "github.com/cosmos/ibc-go/modules/core/02-client/types"
-	connutils "github.com/cosmos/ibc-go/modules/core/03-connection/client/utils"
-	conntypes "github.com/cosmos/ibc-go/modules/core/03-connection/types"
-	chanutils "github.com/cosmos/ibc-go/modules/core/04-channel/client/utils"
-	chantypes "github.com/cosmos/ibc-go/modules/core/04-channel/types"
-	committypes "github.com/cosmos/ibc-go/modules/core/23-commitment/types"
-	ibcexported "github.com/cosmos/ibc-go/modules/core/exported"
-	tmclient "github.com/cosmos/ibc-go/modules/light-clients/07-tendermint/types"
+	transfertypes "github.com/cosmos/ibc-go/v2/modules/apps/transfer/types"
+	clientutils "github.com/cosmos/ibc-go/v2/modules/core/02-client/client/utils"
+	clienttypes "github.com/cosmos/ibc-go/v2/modules/core/02-client/types"
+	connutils "github.com/cosmos/ibc-go/v2/modules/core/03-connection/client/utils"
+	conntypes "github.com/cosmos/ibc-go/v2/modules/core/03-connection/types"
+	chanutils "github.com/cosmos/ibc-go/v2/modules/core/04-channel/client/utils"
+	chantypes "github.com/cosmos/ibc-go/v2/modules/core/04-channel/types"
+	committypes "github.com/cosmos/ibc-go/v2/modules/core/23-commitment/types"
+	ibcexported "github.com/cosmos/ibc-go/v2/modules/core/exported"
+	tmclient "github.com/cosmos/ibc-go/v2/modules/light-clients/07-tendermint/types"
 	abci "github.com/tendermint/tendermint/abci/types"
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 	rpcclient "github.com/tendermint/tendermint/rpc/client"
@@ -46,7 +46,7 @@ var eventFormat = "{eventType}.{eventAttribute}={value}"
 
 // QueryBalance returns the amount of coins in the relayer account
 func (c *Chain) QueryBalance(keyName string) (sdk.Coins, error) {
-	var addr sdk.AccAddress
+	var addr string
 	if keyName == "" {
 		addr = c.MustGetAddress()
 	} else {
@@ -55,10 +55,10 @@ func (c *Chain) QueryBalance(keyName string) (sdk.Coins, error) {
 			return nil, err
 		}
 		done := c.UseSDKContext()
-		addr = info.GetAddress()
+		addr = info.GetAddress().String()
 		done()
 	}
-	return c.QueryBalanceWithAddress(addr.String())
+	return c.QueryBalanceWithAddress(addr)
 }
 
 // QueryBalanceWithAddress returns the amount of coins in the relayer account with address as input
@@ -594,7 +594,7 @@ func (c *Chain) QueryTx(hashHex string) (*ctypes.ResultTx, error) {
 }
 
 // QueryTxs returns an array of transactions given a tag
-func (c *Chain) QueryTxs(height uint64, page, limit int, events []string) ([]*ctypes.ResultTx, error) {
+func (c *Chain) QueryTxs(height uint64, page, count int, events []string) (*ctypes.ResultTxSearch, error) {
 	if len(events) == 0 {
 		return nil, errors.New("must declare at least one event to search")
 	}
@@ -603,15 +603,15 @@ func (c *Chain) QueryTxs(height uint64, page, limit int, events []string) ([]*ct
 		return nil, errors.New("page must greater than 0")
 	}
 
-	if limit <= 0 {
-		return nil, errors.New("limit must greater than 0")
+	if count <= 0 {
+		return nil, errors.New("count must greater than 0")
 	}
 
-	res, err := c.Client.TxSearch(context.Background(), strings.Join(events, " AND "), true, &page, &limit, "")
+	res, err := c.Client.TxSearch(context.Background(), strings.Join(events, " AND "), false, &page, &count, "")
 	if err != nil {
 		return nil, err
 	}
-	return res.Txs, nil
+	return res, nil
 }
 
 // QueryABCI is an affordance for querying the ABCI server associated with a chain

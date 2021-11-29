@@ -27,10 +27,10 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	"github.com/cosmos/go-bip39"
-	clienttypes "github.com/cosmos/ibc-go/modules/core/02-client/types"
-	connectiontypes "github.com/cosmos/ibc-go/modules/core/03-connection/types"
-	ibcexported "github.com/cosmos/ibc-go/modules/core/exported"
-	ibctmtypes "github.com/cosmos/ibc-go/modules/light-clients/07-tendermint/types"
+	clienttypes "github.com/cosmos/ibc-go/v2/modules/core/02-client/types"
+	connectiontypes "github.com/cosmos/ibc-go/v2/modules/core/03-connection/types"
+	ibcexported "github.com/cosmos/ibc-go/v2/modules/core/exported"
+	ibctmtypes "github.com/cosmos/ibc-go/v2/modules/light-clients/07-tendermint/types"
 	"github.com/gogo/protobuf/proto"
 	"github.com/tendermint/tendermint/libs/log"
 	provtypes "github.com/tendermint/tendermint/light/provider"
@@ -43,10 +43,10 @@ import (
 )
 
 var (
-	rtyAttNum = uint(5)
-	rtyAtt    = retry.Attempts(rtyAttNum)
-	rtyDel    = retry.Delay(time.Millisecond * 400)
-	rtyErr    = retry.LastErrorOnly(true)
+	RtyAttNum = uint(5)
+	RtyAtt    = retry.Attempts(RtyAttNum)
+	RtyDel    = retry.Delay(time.Millisecond * 400)
+	RtyErr    = retry.LastErrorOnly(true)
 )
 
 // Chain represents the necessary data for connecting to and indentifying a chain and its counterparites
@@ -323,6 +323,11 @@ func (c *Chain) SendMsgs(msgs []sdk.Msg) (*sdk.TxResponse, bool, error) {
 	}
 
 	// Attach the signature to the transaction
+	// c.LogFailedTx(nil, err, msgs)
+	// Force encoding in the chain specific address
+	for _, msg := range msgs {
+		c.Encoding.Marshaler.MustMarshalJSON(msg)
+	}
 	err = tx.Sign(txf, c.Key, txb, false)
 	if err != nil {
 		return nil, false, err
@@ -441,9 +446,13 @@ func CalculateGas(
 
 // CLIContext returns an instance of client.Context derived from Chain
 func (c *Chain) CLIContext(height int64) sdkCtx.Context {
+	addr, err := c.GetAddress()
+	if err != nil {
+		panic(err)
+	}
 	return sdkCtx.Context{}.
 		WithChainID(c.ChainID).
-		WithCodec(newContextualStdCodec(c.Encoding.Marshaler, c.UseSDKContext)).
+		WithCodec(c.Encoding.Marshaler).
 		WithInterfaceRegistry(c.Encoding.InterfaceRegistry).
 		WithTxConfig(c.Encoding.TxConfig).
 		WithLegacyAmino(c.Encoding.Amino).
@@ -456,7 +465,7 @@ func (c *Chain) CLIContext(height int64) sdkCtx.Context {
 		WithOutputFormat("json").
 		WithFrom(c.Key).
 		WithFromName(c.Key).
-		WithFromAddress(c.MustGetAddress()).
+		WithFromAddress(addr).
 		WithSkipConfirmation(true).
 		WithNodeURI(c.RPCAddr).
 		WithHeight(height)
@@ -510,7 +519,8 @@ func keysDir(home, chainID string) string {
 
 // GetAddress returns the sdk.AccAddress associated with the configured key
 func (c *Chain) GetAddress() (sdk.AccAddress, error) {
-	defer c.UseSDKContext()()
+	done := c.UseSDKContext()
+	defer done()
 	if c.address != nil {
 		return c.address, nil
 	}
@@ -525,13 +535,14 @@ func (c *Chain) GetAddress() (sdk.AccAddress, error) {
 }
 
 // MustGetAddress used for brevity
-func (c *Chain) MustGetAddress() sdk.AccAddress {
+func (c *Chain) MustGetAddress() string {
 	srcAddr, err := c.GetAddress()
 	if err != nil {
 		panic(err)
 	}
-
-	return srcAddr
+	done := c.UseSDKContext()
+	defer done()
+	return srcAddr.String()
 }
 
 var sdkContextMutex sync.Mutex
@@ -801,7 +812,12 @@ func (c *Chain) UpgradeChain(dst *Chain, plan *upgradetypes.Plan, deposit sdk.Co
 		return err
 	}
 
-	msg, err := govtypes.NewMsgSubmitProposal(upgradeProposal, sdk.NewCoins(deposit), c.MustGetAddress())
+	addr, err := c.GetAddress()
+	if err != nil {
+		return err
+	}
+
+	msg, err := govtypes.NewMsgSubmitProposal(upgradeProposal, sdk.NewCoins(deposit), addr)
 	if err != nil {
 		return err
 	}

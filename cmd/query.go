@@ -12,8 +12,8 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/x/auth/types"
-	clienttypes "github.com/cosmos/ibc-go/modules/core/02-client/types"
-	tmclient "github.com/cosmos/ibc-go/modules/light-clients/07-tendermint/types"
+	clienttypes "github.com/cosmos/ibc-go/v2/modules/core/02-client/types"
+	tmclient "github.com/cosmos/ibc-go/v2/modules/light-clients/07-tendermint/types"
 	"github.com/cosmos/relayer/helpers"
 	"github.com/spf13/cobra"
 )
@@ -144,17 +144,17 @@ $ %s q txs ibc-0 "message.action=transfer"`,
 				return err
 			}
 
-			offset, err := cmd.Flags().GetUint64(flags.FlagOffset)
+			page, err := cmd.Flags().GetUint64(flags.FlagPage)
 			if err != nil {
 				return err
 			}
 
-			limit, err := cmd.Flags().GetUint64(flags.FlagLimit)
+			count, err := cmd.Flags().GetUint64("count")
 			if err != nil {
 				return err
 			}
 
-			txs, err := helpers.QueryTxs(chain, args[1], offset, limit)
+			txs, err := helpers.QueryTxs(chain, args[1], page, count)
 			if err != nil {
 				return err
 			}

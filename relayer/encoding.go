@@ -11,9 +11,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/simapp"
 	"github.com/cosmos/cosmos-sdk/simapp/params"
 	"github.com/cosmos/cosmos-sdk/std"
+	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
-	transfer "github.com/cosmos/ibc-go/modules/apps/transfer"
-	ibc "github.com/cosmos/ibc-go/modules/core"
+	transfer "github.com/cosmos/ibc-go/v2/modules/apps/transfer"
+	ibc "github.com/cosmos/ibc-go/v2/modules/core"
 	"github.com/gogo/protobuf/jsonpb"
 	"github.com/gogo/protobuf/proto"
 )
@@ -23,7 +24,7 @@ func (c *Chain) MakeEncodingConfig() params.EncodingConfig {
 	amino := codec.NewLegacyAmino()
 	interfaceRegistry := types.NewInterfaceRegistry()
 	marshaler := c.NewProtoCodec(interfaceRegistry, c.AccountPrefix)
-	txCfg := tx.NewTxConfig(marshaler, tx.DefaultSignModes)
+	txCfg := tx.NewTxConfig(marshaler, []signingtypes.SignMode{signingtypes.SignMode_SIGN_MODE_DIRECT})
 
 	encodingConfig := params.EncodingConfig{
 		InterfaceRegistry: interfaceRegistry,
@@ -99,11 +100,12 @@ func (pc *ProtoCodec) MustMarshalLengthPrefixed(o codec.ProtoMarshaler) []byte {
 
 // Unmarshal implements BinaryMarshaler.Unmarshal method.
 func (pc *ProtoCodec) Unmarshal(bz []byte, ptr codec.ProtoMarshaler) error {
-	defer pc.useContext()()
+	done := pc.useContext()
 	err := ptr.Unmarshal(bz)
 	if err != nil {
 		return err
 	}
+	done()
 	err = types.UnpackInterfaces(ptr, pc)
 	if err != nil {
 		return err
@@ -151,7 +153,6 @@ func (pc *ProtoCodec) MarshalJSON(o proto.Message) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("cannot protobuf JSON encode unsupported type: %T", o)
 	}
-
 	bz, err := codec.ProtoMarshalJSON(m, pc.interfaceRegistry)
 	if err != nil {
 		return []byte{}, err
